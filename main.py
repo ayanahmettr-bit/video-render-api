@@ -1,11 +1,12 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import subprocess
 import uuid
 import os
 import urllib.request
+import urllib.parse
 import json
 
 app = FastAPI()
@@ -13,7 +14,7 @@ app = FastAPI()
 PEXELS_API_KEY = "7kkKD3fWLzWVn9WhAZ70vWYtNRwPWEKn8dZ4UbsVzLNeuEWRehPVLt1t"
 
 class Clip(BaseModel):
-    url: str = None
+    url: Optional[str] = None
     aciklama: str
     rank: int
 
@@ -46,14 +47,13 @@ async def render_video(req: VideoRequest):
     os.makedirs(work_dir, exist_ok=True)
 
     try:
-        import urllib.parse
         clips_sorted = sorted(req.clips, key=lambda x: x.rank, reverse=True)
         processed = []
 
         for i, clip in enumerate(clips_sorted):
             video_url = get_pexels_video(clip.aciklama)
             if not video_url:
-                raise Exception(f"Pexels video bulunamadı: {clip.aciklama}")
+                raise Exception(f"Pexels video bulunamadi: {clip.aciklama}")
 
             raw_path = f"{work_dir}/raw_{i}.mp4"
             proc_path = f"{work_dir}/proc_{i}.mp4"
