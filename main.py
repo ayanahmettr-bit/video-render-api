@@ -5,11 +5,14 @@ from typing import List
 import subprocess
 import uuid
 import os
+import urllib.request
+import json
 
 app = FastAPI()
 
+PEXELS_API_KEY = "7kkKD3fWLzWVn9WhAZ70vWYtNRwPWEKn8dZ4UbsVzLNeuEWRehPVLt1t"
+
 class Clip(BaseModel):
-    url: str
     aciklama: str
     rank: int
 
@@ -17,17 +20,23 @@ class VideoRequest(BaseModel):
     seri_adi: str
     clips: List[Clip]
 
+def get_pexels_video(keyword: str) -> str:
+    url = f"https://api.pexels.com/videos/search?query={urllib.parse.quote(keyword)}&per_page=1&orientation=portrait"
+    req = urllib.request.Request(url, headers={"Authorization": PEXELS_API_KEY})
+    with urllib.request.urlopen(req) as r:
+        data = json.loads(r.read())
+    videos = data.get("videos", [])
+    if not videos:
+        return None
+    files = videos[0].get("video_files", [])
+    sd = next((f for f in files if f.get("quality") == "sd"), None)
+    return (sd or files[0])["link"] if (sd or files) else None
+
 def download_video(url: str, output_path: str):
-    result = subprocess.run([
-        "yt-dlp",
-        "-f", "best[height<=720]/best",
-        "-o", output_path,
-        "--no-playlist",
-        "--merge-output-format", "mp4",
-        url
-    ], capture_output=True, text=True, timeout=120)
-    if result.returncode != 0:
-        raise Exception(f"İndirme hatası: {result.stderr}")
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req) as r:
+        with open(output_path, "wb") as f:
+            f.write(r.read())
 
 @app.post("/render")
 async def render_video(req: VideoRequest):
@@ -36,14 +45,19 @@ async def render_video(req: VideoRequest):
     os.makedirs(work_dir, exist_ok=True)
 
     try:
+        import urllib.parse
         clips_sorted = sorted(req.clips, key=lambda x: x.rank, reverse=True)
         processed = []
 
         for i, clip in enumerate(clips_sorted):
+            video_url = get_pexels_video(clip.aciklama)
+            if not video_url:
+                raise Exception(f"Pexels video bulunamadı: {clip.aciklama}")
+
             raw_path = f"{work_dir}/raw_{i}.mp4"
             proc_path = f"{work_dir}/proc_{i}.mp4"
 
-            download_video(clip.url, raw_path)
+            download_video(video_url, raw_path)
 
             subprocess.run([
                 "ffmpeg", "-i", raw_path,
@@ -74,7 +88,7 @@ async def render_video(req: VideoRequest):
             start_t = i * 6
             end_t = start_t + 6
             y_pos = 200 + (i * 120)
-            safe_text = clip.aciklama.replace("'", "")
+            safe_text = clip.aciklama.replace("'", "").replace(":", "")
             active_filter += f"drawtext=text='{safe_text}':fontsize=32:fontcolor=yellow:x=110:y={y_pos+10}:enable='between(t\\,{start_t}\\,{end_t})',"
 
         safe_title = req.seri_adi.replace("'", "")
