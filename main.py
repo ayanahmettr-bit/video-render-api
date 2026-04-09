@@ -23,14 +23,14 @@ class VideoRequest(BaseModel):
     clips: List[Clip]
 
 def get_pexels_video(keyword: str) -> str:
-    url = f"https://api.pexels.com/videos/search?query={urllib.parse.quote(keyword)}&per_page=3&orientation=portrait"
-    req = urllib.request.Request(url, headers={"Authorization": PEXELS_API_KEY})
+    api_url = "https://api.pexels.com/videos/search?query=" + urllib.parse.quote(keyword) + "&per_page=3&orientation=portrait"
+    req = urllib.request.Request(api_url, headers={"Authorization": PEXELS_API_KEY})
     with urllib.request.urlopen(req, timeout=30) as r:
         data = json.loads(r.read())
     videos = data.get("videos", [])
     if not videos:
-        url2 = "https://api.pexels.com/videos/search?query=people&per_page=1&orientation=portrait"
-        req2 = urllib.request.Request(url2, headers={"Authorization": PEXELS_API_KEY})
+        api_url2 = "https://api.pexels.com/videos/search?query=people&per_page=1&orientation=portrait"
+        req2 = urllib.request.Request(api_url2, headers={"Authorization": PEXELS_API_KEY})
         with urllib.request.urlopen(req2, timeout=30) as r2:
             data2 = json.loads(r2.read())
         videos = data2.get("videos", [])
@@ -45,7 +45,7 @@ def get_pexels_video(keyword: str) -> str:
 @app.post("/render")
 async def render_video(req: VideoRequest):
     job_id = str(uuid.uuid4())
-    work_dir = f"/tmp/{job_id}"
+    work_dir = "/tmp/" + job_id
     os.makedirs(work_dir, exist_ok=True)
 
     try:
@@ -54,11 +54,11 @@ async def render_video(req: VideoRequest):
 
         for i, clip in enumerate(clips_sorted):
             video_url = get_pexels_video(clip.aciklama)
-            proc_path = f"{work_dir}/proc_{i}.mp4"
+            proc_path = work_dir + "/proc_" + str(i) + ".mp4"
 
             result = subprocess.run([
                 "ffmpeg",
-                "-headers", "Referer: https://www.pexels.com/\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n",
+                "-headers", "Referer: https://www.pexels.com/\r\nUser-Agent: Mozilla/5.0\r\n",
                 "-i", video_url,
                 "-t", "6",
                 "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
@@ -66,16 +66,16 @@ async def render_video(req: VideoRequest):
             ], capture_output=True, timeout=120)
 
             if result.returncode != 0:
-                raise Exception(f"FFmpeg hatasi: {result.stderr.decode()}")
+                raise Exception("FFmpeg hatasi: " + result.stderr.decode())
 
             processed.append(proc_path)
 
-        concat_file = f"{work_dir}/concat.txt"
+        concat_file = work_dir + "/concat.txt"
         with open(concat_file, "w") as f:
             for p in processed:
-                f.write(f"file '{p}'\n")
+                f.write("file '" + p + "'\n")
 
-        merged = f"{work_dir}/merged.mp4"
+        merged = work_dir + "/merged.mp4"
         subprocess.run([
             "ffmpeg", "-f", "concat", "-safe", "0",
             "-i", concat_file, "-c", "copy", "-y", merged
@@ -84,7 +84,7 @@ async def render_video(req: VideoRequest):
         numbers_filter = ""
         for i, clip in enumerate(clips_sorted):
             y_pos = 200 + (i * 120)
-            numbers_filter += f"drawtext=text='{clip.rank}.':fontsize=55:fontcolor=white:x=40:y={y_pos},"
+            numbers_filter += "drawtext=text='" + str(clip.rank) + ".':fontsize=55:fontcolor=white:x=40:y=" + str(y_pos) + ","
 
         active_filter = ""
         for i, clip in enumerate(clips_sorted):
@@ -92,14 +92,14 @@ async def render_video(req: VideoRequest):
             end_t = start_t + 6
             y_pos = 200 + (i * 120)
             safe_text = clip.aciklama.replace("'", "").replace(":", "").replace(",", "")
-            active_filter += f"drawtext=text='{safe_text}':fontsize=32:fontcolor=yellow:x=110:y={y_pos+10}:enable='between(t\\,{start_t}\\,{end_t})',"
+            active_filter += "drawtext=text='" + safe_text + "':fontsize=32:fontcolor=yellow:x=110:y=" + str(y_pos + 10) + ":enable='between(t\\," + str(start_t) + "\\," + str(end_t) + ")',"
 
         safe_title = req.seri_adi.replace("'", "")
-        title_filter = f"drawtext=text='{safe_title}':fontsize=52:fontcolor=white:x=(w-tw)/2:y=60:box=1:boxcolor=black@0.5:boxborderw=10"
+        title_filter = "drawtext=text='" + safe_title + "':fontsize=52:fontcolor=white:x=(w-tw)/2:y=60:box=1:boxcolor=black@0.5:boxborderw=10"
 
         full_filter = numbers_filter + active_filter + title_filter
 
-        output = f"{work_dir}/final.mp4"
+        output = work_dir + "/final.mp4"
         subprocess.run([
             "ffmpeg", "-i", merged,
             "-vf", full_filter,
