@@ -13,6 +13,7 @@ app = FastAPI()
 PEXELS_API_KEY = "7kkKD3fWLzWVn9WhAZ70vWYtNRwPWEKn8dZ4UbsVzLNeuEWRehPVLt1t"
 
 class Clip(BaseModel):
+    url: str = None
     aciklama: str
     rank: int
 
