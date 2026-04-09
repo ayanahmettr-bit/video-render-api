@@ -1,10 +1,10 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import List
 import subprocess
 import uuid
 import os
-import urllib.request
 
 app = FastAPI()
 
@@ -17,12 +17,17 @@ class VideoRequest(BaseModel):
     seri_adi: str
     clips: List[Clip]
 
-def download_file(url: str, path: str):
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req) as response:
-        with open(path, 'wb') as f:
-            f.write(response.read())
+def download_video(url: str, output_path: str):
+    result = subprocess.run([
+        "yt-dlp",
+        "-f", "best[height<=720]/best",
+        "-o", output_path,
+        "--no-playlist",
+        "--merge-output-format", "mp4",
+        url
+    ], capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        raise Exception(f"İndirme hatası: {result.stderr}")
 
 @app.post("/render")
 async def render_video(req: VideoRequest):
@@ -32,27 +37,22 @@ async def render_video(req: VideoRequest):
 
     try:
         clips_sorted = sorted(req.clips, key=lambda x: x.rank, reverse=True)
-        input_files = []
+        processed = []
 
         for i, clip in enumerate(clips_sorted):
-            ext = ".mp4"
-            clip_path = f"{work_dir}/clip_{i}{ext}"
-            download_file(clip.url, clip_path)
-            input_files.append(clip_path)
+            raw_path = f"{work_dir}/raw_{i}.mp4"
+            proc_path = f"{work_dir}/proc_{i}.mp4"
 
-        # Her klibi 5 saniyeye kırp ve 9:16 formatına getir
-        processed = []
-        for i, clip_path in enumerate(input_files):
-            out = f"{work_dir}/proc_{i}.mp4"
+            download_video(clip.url, raw_path)
+
             subprocess.run([
-                "ffmpeg", "-i", clip_path,
+                "ffmpeg", "-i", raw_path,
                 "-t", "6",
                 "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
-                "-c:v", "libx264", "-an", "-y", out
+                "-c:v", "libx264", "-an", "-y", proc_path
             ], check=True, capture_output=True)
-            processed.append(out)
+            processed.append(proc_path)
 
-        # Concat list oluştur
         concat_file = f"{work_dir}/concat.txt"
         with open(concat_file, "w") as f:
             for p in processed:
@@ -64,26 +64,21 @@ async def render_video(req: VideoRequest):
             "-i", concat_file, "-c", "copy", "-y", merged
         ], check=True, capture_output=True)
 
-        # Overlay: başlık + sayılar + açıklamalar
-        total_duration = 6 * len(processed)
-        
-        # Tüm sayıları sol tarafa yaz
         numbers_filter = ""
         for i, clip in enumerate(clips_sorted):
             y_pos = 200 + (i * 120)
-            rank_num = clip.rank
-            numbers_filter += f"drawtext=text='{rank_num}.':fontsize=55:fontcolor=white:x=40:y={y_pos}:enable='between(t,0,{total_duration})',"
+            numbers_filter += f"drawtext=text='{clip.rank}.':fontsize=55:fontcolor=white:x=40:y={y_pos},"
 
-        # Aktif sayı ve açıklama (her 6 saniyede bir)
         active_filter = ""
         for i, clip in enumerate(clips_sorted):
             start_t = i * 6
             end_t = start_t + 6
             y_pos = 200 + (i * 120)
-            active_filter += f"drawtext=text='{clip.aciklama}':fontsize=32:fontcolor=yellow:x=110:y={y_pos+10}:enable='between(t,{start_t},{end_t})',"
+            safe_text = clip.aciklama.replace("'", "")
+            active_filter += f"drawtext=text='{safe_text}':fontsize=32:fontcolor=yellow:x=110:y={y_pos+10}:enable='between(t\\,{start_t}\\,{end_t})',"
 
-        # Başlık
-        title_filter = f"drawtext=text='{req.seri_adi}':fontsize=52:fontcolor=white:fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:x=(w-tw)/2:y=60:box=1:boxcolor=black@0.5:boxborderw=10"
+        safe_title = req.seri_adi.replace("'", "")
+        title_filter = f"drawtext=text='{safe_title}':fontsize=52:fontcolor=white:x=(w-tw)/2:y=60:box=1:boxcolor=black@0.5:boxborderw=10"
 
         full_filter = numbers_filter + active_filter + title_filter
 
@@ -98,7 +93,6 @@ async def render_video(req: VideoRequest):
         with open(output, "rb") as f:
             video_bytes = f.read()
 
-        from fastapi.responses import Response
         return Response(content=video_bytes, media_type="video/mp4")
 
     except Exception as e:
