@@ -29,7 +29,7 @@ def get_pexels_video(keyword: str) -> str:
         data = json.loads(r.read())
     videos = data.get("videos", [])
     if not videos:
-        url2 = f"https://api.pexels.com/videos/search?query=funny&per_page=1&orientation=portrait"
+        url2 = "https://api.pexels.com/videos/search?query=people&per_page=1&orientation=portrait"
         req2 = urllib.request.Request(url2, headers={"Authorization": PEXELS_API_KEY})
         with urllib.request.urlopen(req2, timeout=30) as r2:
             data2 = json.loads(r2.read())
@@ -41,18 +41,6 @@ def get_pexels_video(keyword: str) -> str:
     hd = next((f for f in files if f.get("quality") == "hd"), None)
     chosen = sd or hd or files[0]
     return chosen["link"]
-
-def download_video(url: str, output_path: str):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://www.pexels.com/",
-        "Accept": "*/*",
-        "Accept-Language": "en-US,en;q=0.9"
-    }
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=120) as r:
-        with open(output_path, "wb") as f:
-            f.write(r.read())
 
 @app.post("/render")
 async def render_video(req: VideoRequest):
@@ -66,17 +54,20 @@ async def render_video(req: VideoRequest):
 
         for i, clip in enumerate(clips_sorted):
             video_url = get_pexels_video(clip.aciklama)
-            raw_path = f"{work_dir}/raw_{i}.mp4"
             proc_path = f"{work_dir}/proc_{i}.mp4"
 
-            download_video(video_url, raw_path)
-
-            subprocess.run([
-                "ffmpeg", "-i", raw_path,
+            result = subprocess.run([
+                "ffmpeg",
+                "-headers", "Referer: https://www.pexels.com/\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n",
+                "-i", video_url,
                 "-t", "6",
                 "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
                 "-c:v", "libx264", "-an", "-y", proc_path
-            ], check=True, capture_output=True)
+            ], capture_output=True, timeout=120)
+
+            if result.returncode != 0:
+                raise Exception(f"FFmpeg hatasi: {result.stderr.decode()}")
+
             processed.append(proc_path)
 
         concat_file = f"{work_dir}/concat.txt"
