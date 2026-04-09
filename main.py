@@ -23,20 +23,34 @@ class VideoRequest(BaseModel):
     clips: List[Clip]
 
 def get_pexels_video(keyword: str) -> str:
-    url = f"https://api.pexels.com/videos/search?query={urllib.parse.quote(keyword)}&per_page=1&orientation=portrait"
+    url = f"https://api.pexels.com/videos/search?query={urllib.parse.quote(keyword)}&per_page=3&orientation=portrait"
     req = urllib.request.Request(url, headers={"Authorization": PEXELS_API_KEY})
-    with urllib.request.urlopen(req) as r:
+    with urllib.request.urlopen(req, timeout=30) as r:
         data = json.loads(r.read())
     videos = data.get("videos", [])
     if not videos:
-        return None
+        url2 = f"https://api.pexels.com/videos/search?query=funny&per_page=1&orientation=portrait"
+        req2 = urllib.request.Request(url2, headers={"Authorization": PEXELS_API_KEY})
+        with urllib.request.urlopen(req2, timeout=30) as r2:
+            data2 = json.loads(r2.read())
+        videos = data2.get("videos", [])
+    if not videos:
+        raise Exception("Pexels video bulunamadi")
     files = videos[0].get("video_files", [])
     sd = next((f for f in files if f.get("quality") == "sd"), None)
-    return (sd or files[0])["link"] if (sd or files) else None
+    hd = next((f for f in files if f.get("quality") == "hd"), None)
+    chosen = sd or hd or files[0]
+    return chosen["link"]
 
 def download_video(url: str, output_path: str):
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req) as r:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://www.pexels.com/",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9"
+    }
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=120) as r:
         with open(output_path, "wb") as f:
             f.write(r.read())
 
@@ -52,9 +66,6 @@ async def render_video(req: VideoRequest):
 
         for i, clip in enumerate(clips_sorted):
             video_url = get_pexels_video(clip.aciklama)
-            if not video_url:
-                raise Exception(f"Pexels video bulunamadi: {clip.aciklama}")
-
             raw_path = f"{work_dir}/raw_{i}.mp4"
             proc_path = f"{work_dir}/proc_{i}.mp4"
 
@@ -89,7 +100,7 @@ async def render_video(req: VideoRequest):
             start_t = i * 6
             end_t = start_t + 6
             y_pos = 200 + (i * 120)
-            safe_text = clip.aciklama.replace("'", "").replace(":", "")
+            safe_text = clip.aciklama.replace("'", "").replace(":", "").replace(",", "")
             active_filter += f"drawtext=text='{safe_text}':fontsize=32:fontcolor=yellow:x=110:y={y_pos+10}:enable='between(t\\,{start_t}\\,{end_t})',"
 
         safe_title = req.seri_adi.replace("'", "")
