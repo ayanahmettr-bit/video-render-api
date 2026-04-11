@@ -6,11 +6,10 @@ import subprocess
 import uuid
 import os
 import urllib.request
+import urllib.parse
 import json
 
 app = FastAPI()
-
-FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
 class Clip(BaseModel):
     url: Optional[str] = None
@@ -67,13 +66,6 @@ def make_fallback_clip(work_dir: str, index: int, output_path: str):
         "-t", "6", "-c:v", "libx264", "-y", output_path
     ], check=True, capture_output=True)
 
-def ft(text, size, color, x, y, extra=""):
-    safe = text.replace("'", "").replace(":", "").replace(",", "").replace("\\", "")
-    base = f"drawtext=fontfile={FONT}:text='{safe}':fontsize={size}:fontcolor={color}:x={x}:y={y}"
-    if extra:
-        base += ":" + extra
-    return base
-
 @app.post("/render")
 async def render_video(req: VideoRequest):
     job_id = str(uuid.uuid4())
@@ -90,11 +82,16 @@ async def render_video(req: VideoRequest):
             downloaded = False
 
             if clip.url and clip.url.strip() and clip.url.startswith("http"):
+                # Cobalt deneyelim
                 cobalt_url = get_cobalt_url(clip.url)
                 if cobalt_url:
                     downloaded = download_with_ytdlp(cobalt_url, raw_path)
+
+                # Cobalt basarisizsa yt-dlp ile direkt dene
                 if not downloaded:
                     downloaded = download_with_ytdlp(clip.url, raw_path)
+
+                # Video indirildiyse FFmpeg ile isle
                 if downloaded and os.path.exists(raw_path):
                     r = subprocess.run([
                         "ffmpeg", "-i", raw_path,
@@ -121,36 +118,23 @@ async def render_video(req: VideoRequest):
             "-i", concat_file, "-c", "copy", "-y", merged
         ], check=True, capture_output=True)
 
-        filters = []
-
-        # Seri başlığı (üstte)
-        safe_title = req.seri_adi.replace("'", "")
-        filters.append(
-            f"drawtext=fontfile={FONT}:text='{safe_title}':fontsize=54:fontcolor=white"
-            f":x=(w-tw)/2:y=60:box=1:boxcolor=black@0.6:boxborderw=12"
-        )
-
-        # Her klip için numara ve açıklama
+        numbers_filter = ""
         for i, clip in enumerate(clips_sorted):
             y_pos = 200 + (i * 120)
+            numbers_filter += "drawtext=text='" + str(clip.rank) + ".':fontsize=60:fontcolor=white:x=40:y=" + str(y_pos) + ","
+
+        active_filter = ""
+        for i, clip in enumerate(clips_sorted):
             start_t = i * 6
             end_t = start_t + 6
-
-            # Numara (her zaman görünür)
-            filters.append(
-                f"drawtext=fontfile={FONT}:text='{clip.rank}.':fontsize=60"
-                f":fontcolor=white:x=40:y={y_pos}"
-            )
-
-            # Açıklama (sadece o klip oynarken)
+            y_pos = 200 + (i * 120)
             safe_text = clip.aciklama.replace("'", "").replace(":", "").replace(",", "")
-            filters.append(
-                f"drawtext=fontfile={FONT}:text='{safe_text}':fontsize=34"
-                f":fontcolor=yellow:x=110:y={y_pos + 12}"
-                f":enable='between(t\\,{start_t}\\,{end_t})'"
-            )
+            active_filter += "drawtext=text='" + safe_text + "':fontsize=34:fontcolor=yellow:x=110:y=" + str(y_pos + 12) + ":enable='between(t\\," + str(start_t) + "\\," + str(end_t) + ")',"
 
-        full_filter = ",".join(filters)
+        safe_title = req.seri_adi.replace("'", "")
+        title_filter = "drawtext=text='" + safe_title + "':fontsize=54:fontcolor=white:x=(w-tw)/2:y=60:box=1:boxcolor=black@0.6:boxborderw=12"
+
+        full_filter = numbers_filter + active_filter + title_filter
 
         output = work_dir + "/final.mp4"
         r2 = subprocess.run([
